@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>NYC Traffic Analysis</title>
+<style>
+
+@import url(style.css);
+ 
+#circle circle {
+fill: none;
+pointer-events: all;
+}
+ 
+.group path {
+fill-opacity: .5;
+}
+ 
+path.chord {
+stroke: #000;
+stroke-width: .25px;
+}
+
+div.tooltip {
+    position: absolute;
+    text-align: center;
+    width: 120px;
+    height: 40px;
+    padding: 2px;
+    font: 12px sans-serif;
+    background: lightsteelblue;
+    border: 0px;
+    border-radius: 8px;
+    pointer-events: none;
+}
+ 
+#circle:hover path.fade {
+display: none;
+}
+
+
+ 	path.default 
+	{
+       		stroke-width: 0.5px;
+		fill: #ccc;
+  		stroke: #666
+ 	 }
+	path.selected
+	{
+	    stroke: black;
+    	stroke-width: 2.5px;
+		fill: #ccc;
+	}
+	path.park
+	{
+	    stroke: black;
+    	stroke-width: 2.5px;
+		fill: #F2F2F2;
+	}
+
+
+
+</style>
+ 
+ 
+<h1>New York City Taxi Traffic</h1>
+
+<p>
+Here we are taking a look at the famous (at least amongst data analysists) <a href=http://www.nyc.gov/html/tlc/html/about/trip_record_data.shtml> NYC Taxi and Limousine Commission Trip Records</a>. I will be using a subset of the total data corpus detailing 72,368,450 individual cab rides taken between January 2015 and June 2015 inclusive, and totaling ~28Gb of raw data.</p>
+<div id = 'allthelights'>
+<aside>	
+Yellow cab pickup locations for February 2015. When the reported GPS coordinates are binned onto a 1024x1024 grid, an ‘image’ of Manhattans roadways and major airports emerges. 
+</aside>
+<img src='cab_pickups_feb2015.png' height=450 width =450>
+</div>
+
+<p> To get a handle on the data the GPS coordinates for each pickup and drop-off location were binned into neighborhoods as defined by the <a href='http://www1.nyc.gov/site/planning/data-maps/open-data.page#other'>New York City Department of City Planning Neighborhood Tabulations</a> 2010 census tracts. All the analysis was preformed using PostgreSQL / PostGIS (for the heavy geospatial stuff), Python / Pandas (for any additional processing), and D3.js to generate the images; analysis scripts can be found on my <a href='https://github.com/jfried23/nyc_taxi'>github</a>. That out of the way and without further ado, lets take a look at the data!     
+</p>
+
+<h3>All the lonely people, where do they all come from?</h3> 
+      	<p>
+First let’s take a look at taxi cab passenger flux into/out of New York city neighborhoods during an average weekday. (Here I am grouping all weekday trips by pickup neighborhood (efflux) or drop off neighborhood (influx) and hour, and then aggregating the groups by summing the total number of passengers. The net flux is simply the difference between the number of passengers that arrive in a neighborhood during the hour, and then number that departs.)	  
+  <div id="wrapper"> 
+        
+	</p>
+       <button width =50 id="play">play</button> 
+      <span id="clock">Time: </span>
+	<aside>Click 'start' button to begin the animation.
+	<p>
+	<p>Black patches are parks.</a></p>
+	<p>Red indicates a net effulx of cab passengers durring the hour. Blue a net influx of passengers.
+	</a></p>
+	</p>
+	</aside>
+	<div id="map_area"></div>
+ </div>
+
+
+<p> 
+You will notice during the animation that between 6:00 A.M. and 12:00 P.M. neighborhoods like Midtown Hudson Yards, SOHO and Lower Manhattan all experience a large net influx of traffic (Blue) that drops off into the early afternoon. This trend then reverses itself around 7:00PM as the net cab traffic begins to stream out of these areas (Red) and the work day draws to a close.    
+</p>
+
+<p>
+Also noteworthy are the airports; JFK and LGA. Cabs begin taking more travelers to the airport durring the early A.M.(beging around 5:00 A.M.) and by the early afternoon ~11:00 A.M. are picking up more passgeners from the airports.
+</p>
+
+<p>
+This style of visulaization helps us to understand where passengers go durring the work day, but not where they are comming from.
+</p>
+<h3>Connectivty between 20 neighborhoods with the most taxi pickups</h3> 
+
+<p>
+I next looked at the most frequent taxi trips in terms of departure and destination neighborhoods, and made a chord diagram representing where passegeners travel between 20 neighborhoods with the most taxi traffic.   
+</p>
+
+
+
+<div id = 'chord'>
+	<aside>Mouseover to focus on travel from a particular neighborhood. Note that the colors in this graph serve only to distinguish the neighhoods and no longer reprsent passenger flux. 
+	<p>
+	<p>Thanks to Mike Bostock for <a href="http://bost.ocks.org/mike/uberdata/">Uber Rides by Neighborhood!</a></p>
+	</p>
+	</aside>
+ </div>
+<p>
+It is immediately clear that Midtown Manhattan is the central tranisit hub for taxi traffic in the city. 
+</p>
+<p>
+Also interesting is that the cab riding population of the 'North Side' neighborhood, more commonly known as Williamsburg Brooklyn (home of beards, blue ribbon beer, trucker hats and all things meta/ironic), seldom take cabs into Manhattan. Most cab fares (~60%) that begin in Williamsburg end in Williamsburg.
+</p>
+
+
+
+
+
+<script src="topojson.v1.min.js"></script>
+<script src="d3.v3.min.js"></script>
+
+<!-- Code to make the nyc area map-->
+<script>
+  //globals
+var width, height, projection, path, graticule, svg, attributeArray = [], currentAttribute = 0, playing = false;
+
+ var div = d3.select("#map_area").append("div")
+    .attr("class", "tooltip")
+    .style("opacity", 0);
+
+var color = d3.scale.linear()
+   .domain([-.8, 0, .8])
+   .range(["red", 'white',  "blue"])
+
+            var w = 500;
+            var h = 450;
+
+            //Define map projection
+            var projection = d3.geo.mercator()
+                                   .translate([w/2, h/2])
+                                   .scale([70000])
+                                   .center( [-73.88, 40.74] );
+                                   
+
+            //Define path generator
+            var coast = d3.geo.path()
+                              .projection(projection);
+
+            //Create SVG element
+            var map_obj = d3.select("#map_area")
+                            .append('svg')
+                            .attr('class', 'nymap')
+                            .attr("width", w)
+                            .attr("height", h);
+  loadData();  // let's load our data next
+
+
+
+function loadData() {
+
+  d3.json("boro_simple.json", function(error1, data1) { 
+  d3.csv("weekday_flux.csv", function(error2, data2) {
+  
+    processData( data1, data2 );
+
+  });
+  });
+};
+
+
+function processData(map,flux) 
+{
+  // function accepts any errors from the queue function as first argument, then
+  // each data object in the order of chained defer() methods above
+  //here we bind the data from the csv to the geojson data in features[i].properties.data
+ 
+  for ( var i in map.features) 
+  {
+  for ( var j in flux )
+    {
+      if (flux[j].id ==  map.features[i].properties.ntaname)
+      {
+        map.features[i].properties.data = flux[j];
+        break;
+      }
+    }
+  }
+ 
+  drawMap( map );
+ };  
+
+
+function drawMap( map)
+{
+
+
+                //Bind data and create one path per GeoJSON feature
+
+
+                  map_obj.selectAll("path")
+                   .data(map.features)
+                   .enter()
+                   .append("path")
+                   .attr("d", coast)
+                   .filter( function(d){ if ( d.properties.ntaname.includes('park-') == true )
+                    {
+                      d3.select('this').style("fill", 'whilte');
+                      return false;
+                    }
+                    else {return true;} ; 
+                  } )
+       .filter( function(d){ return ! d.properties.ntaname.includes('park-'); } )
+       .attr('id', function(d){ return d.properties.ntacode; } )
+           .attr('class','default')
+       .on('mouseover',
+	function(d){  
+
+	div.transition()
+                .duration(200)
+                .style("opacity", .9);
+
+	div.html( d.properties.ntaname )
+                .style("left", (d3.event.pageX) + "px")
+                .style("top", (d3.event.pageY - 28) + "px");
+
+	d3.select(this).attr('class','selected')
+	})
+       .on('mouseout', function(d){  d3.select(this).attr('class','default') } ); 
+	
+	animateMap( map );
+
+
+
+}
+
+function setColor( map, time )
+{	
+	for( var i in map.features )
+	{
+		
+		var id = map.features[i].properties.ntacode;
+		d3.select( '#' + id )
+                  .transition() 
+                  .duration(250)
+                  .style('fill', color(map.features[i].properties.data[time]) );
+	}
+}
+
+
+function animateMap(map) {
+
+  var timer;  // create timer object
+  d3.select('#play')  
+    .on('click', function() {  // when user clicks the play button
+      if(playing == false) {  // if the map is currently playing
+        timer = setInterval(function(){   // set a JS interval
+          if(currentAttribute < 24) {  
+              currentAttribute +=1;  // increment the current attribute counter
+          } else {
+              currentAttribute = 1;  // or reset it to zero
+          }
+          setColor(map, currentAttribute);  // update the representation of the map
+
+	var tt ="" 
+	 if  (currentAttribute == 12) {tt = currentAttribute + " PM" }
+	 else if (currentAttribute == 24)  {tt = currentAttribute-12 + " AM" }
+	 else if ( currentAttribute > 12 ) { tt = currentAttribute-12 + " PM" }
+         else { tt = currentAttribute + " AM " };
+ 
+          d3.select('#clock').html("Time: " + tt);  // update the clock
+        }, 2000);
+      
+        d3.select(this).html('stop');  // change the button label to stop
+        playing = true;   // change the status of the animation
+      } else {    // else if is currently playing
+        clearInterval(timer);   // stop the animation by clearing the interval
+        d3.select(this).html('play');   // change the button label to play
+        playing = false;   // change the status again
+      }
+  });
+}
+  
+</script>
+
+
+
+<!-- generate chorde diagam below -->
+<script>
+ 
+	var width =700,
+	height = 700,
+	outerRadius = Math.min(width, height) / 2 - 10,
+	innerRadius = outerRadius - 24;
+ 
+	var formatPercent = d3.format(".1%");
+ 
+	var arc = d3.svg.arc()
+				.innerRadius(innerRadius)
+				.outerRadius(outerRadius);
+ 
+	var layout = d3.layout.chord()
+				   .padding(.04)
+				   .sortSubgroups(d3.descending)
+				   .sortChords(d3.ascending);
+ 
+var path = d3.svg.chord()
+.radius(innerRadius);
+ 
+var svg = d3.select("#chord").append("svg")
+.attr("width", width)
+.attr("height", height)
+.append("g")
+.attr("id", "circle")
+.attr("transform", "translate(" + width / 2 + "," + height / 2 + ")");
+ 
+svg.append("circle")
+.attr("r", outerRadius);
+ 
+d3.csv("borro.csv", function(cities) {
+d3.json("matrix.json", function(matrix) {
+ 
+// Compute the chord layout.
+layout.matrix(matrix);
+ 
+// Add a group per neighborhood.
+var group = svg.selectAll(".group")
+.data(layout.groups)
+.enter().append("g")
+.attr("class", "group")
+.on("mouseover", mouseover);
+ 
+// Add a mouseover title.
+ group.append("title").text(function(d, i) {
+ return cities[i].name + ": " + formatPercent(d.value) + " of origins";
+ });
+ 
+// Add the group arc.
+var groupPath = group.append("path")
+.attr("id", function(d, i) { return "group" + i; })
+.attr("d", arc)
+.style("fill", function(d, i) { return cities[i].color; });
+ 
+// Add a text label.
+var groupText = group.append("text")
+.attr("x", 6)
+.attr("dy", 15);
+ 
+groupText.append("textPath")
+.attr("xlink:href", function(d, i) { return "#group" + i; })
+.text(function(d, i) { return cities[i].name; });
+ 
+// Remove the labels that don't fit. :(
+groupText.filter(function(d, i) { return groupPath[0][i].getTotalLength() / 2 - 16 < this.getComputedTextLength(); })
+.remove();
+ 
+// Add the chords.
+var chord = svg.selectAll(".chord")
+.data(layout.chords)
+.enter().append("path")
+.attr("class", "chord")
+.style("fill", function(d) { return cities[d.source.index].color; })
+.attr("d", path);
+ 
+// Add an elaborate mouseover title for each chord.
+ chord.append("title").text(function(d) {
+ return cities[d.source.index].name
+ + " → " + cities[d.target.index].name
+ + ": " + formatPercent(d.source.value)
+ + "\n" + cities[d.target.index].name
+ + " → " + cities[d.source.index].name
+ + ": " + formatPercent(d.target.value);
+ });
+ 
+function mouseover(d, i) {
+chord.classed("fade", function(p) {
+return p.source.index != i
+&& p.target.index != i;
+});
+}
+});
+});
+ 
+</script>
+ 
